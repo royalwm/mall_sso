@@ -1,5 +1,6 @@
 package com.mall.sso.controller;
 
+import com.mall.sso.config.RedisClient;
 import com.mall.sso.constant.RestConstant;
 import com.mall.sso.pojo.User;
 import com.mall.sso.service.UserService;
@@ -20,11 +21,15 @@ import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import javax.servlet.http.HttpSession;
 
+import net.sf.json.JSONObject;
+
 @Controller
 @RequestMapping("/user")
 public class UserController {
     @Autowired
     private UserService userService;
+    @Autowired
+    private RedisClient redisClinet;
 
     @RequestMapping(value = "/register/check/{content}/{type}", method = RequestMethod.GET)
     @ResponseBody
@@ -48,46 +53,61 @@ public class UserController {
         }
         String token = UUID.randomUUID().toString();
         Cookie cookie = new Cookie("token", token);
-        cookie.setMaxAge(5*60);
+        JSONObject fromObject = JSONObject.fromObject(userList.get(0));
+        try {
+            redisClinet.set(token, fromObject.toString());
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        cookie.setMaxAge(5 * 60);
+        redisClinet.setExpire(token,5*60);
         cookie.setPath("/");
         response.addCookie(cookie);
-        HttpSession session = request.getSession();
-        session.setAttribute("token:"+token, userList.get(0));
         return RestConstant.SUCCESS;
     }
-    
+
     @RequestMapping(value = "/logout", method = RequestMethod.GET)
     public String logout(HttpServletRequest request, HttpServletResponse response) {
         Cookie[] cookies = request.getCookies();
-        if (cookies!=null) {
+        if (cookies != null) {
             for (Cookie cookie : cookies) {
                 if (cookie.getName().equals("token")) {
-                    cookie.setValue(null);  
-                    cookie.setMaxAge(0);// 立即销毁cookie  
-                    cookie.setPath("/");  
-                    response.addCookie(cookie); 
+                    redisClinet.setExpire(cookie.getValue(),0);
+                    cookie.setValue(null);
+                    cookie.setMaxAge(0);// 立即销毁cookie
+                    cookie.setPath("/");
+                    response.addCookie(cookie);
                 }
             }
         }
         return "login";
     }
+
     @RequestMapping(value = "/token/{token}", method = RequestMethod.GET)
     @ResponseBody
-    public Object validateSession(HttpServletRequest request, HttpServletResponse response,@PathVariable("token")String token, String callback) {
-        HttpSession session = request.getSession();
-        User user = (User) session.getAttribute("token:"+token);
-        if (user!=null) {
+    public Object validateSession(HttpServletRequest request, HttpServletResponse response,
+                    @PathVariable("token") String token, String callback) {
+        String string = null;
+        try {
+            string = redisClinet.get(token);
+        } catch (Exception e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        }
+        JSONObject fromObject = JSONObject.fromObject(string);
+        User user =  (User) JSONObject.toBean(fromObject,User.class);
+        if (user != null) {
             Cookie[] cookies = request.getCookies();
-            if (cookies!=null) {
+            if (cookies != null) {
                 for (Cookie cookie : cookies) {
                     if (cookie.getName().equals("token")) {
-                        cookie.setMaxAge(5*60);
+                        cookie.setMaxAge(5 * 60);
                         cookie.setPath("/");
                     }
                 }
             }
-            MappingJacksonValue mappingJacksonValue = new MappingJacksonValue(user); 
-            mappingJacksonValue.setJsonpFunction(callback); 
+            MappingJacksonValue mappingJacksonValue = new MappingJacksonValue(user);
+            mappingJacksonValue.setJsonpFunction(callback);
             return mappingJacksonValue;
         }
         return null;
